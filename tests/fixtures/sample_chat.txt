@@ -1,0 +1,7 @@
+Customer: Hi, I'm Priya Nair. Reach me at priya.nair@contoso.example or +1-206-555-0199.
+Agent: Thanks Priya. I also see @priya_nair on the workspace.
+Customer: Please rotate key ghp_abcdefghijklmnopqrstuvwx and don't log it.
+Customer: Temporary password: Vn9$kQ2mLp!x and verification code is 392847.
+Customer: Random reset token is a8f3K9mX2pQ7vL0s.
+Agent: Enter the code 552219 to confirm. Account ID: acct_77821.
+Agent: Done. I'll email priya.nair@contoso.example to confirm.

@@ -1,0 +1,51 @@
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Secrets and local config
+.env
+.env.*
+
+# Never commit real client conversations or exports
+data/
+input/
+output/
+maps/
+*.chat
+
+# Block loose text/JSON dumps by default
+*.txt
+*.json
+
+# Allow project docs, deps, and synthetic samples only
+!requirements.txt
+!tests/fixtures/**
+!examples/**
+
+# Replacement maps often contain real PII — never commit them
+*_map.json
+replacement_map.json
+!tests/fixtures/**/*_map.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
