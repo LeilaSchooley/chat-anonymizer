@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import re
-from collections import Counter
+import spacy
 from functools import lru_cache
 
 from presidio_analyzer import (
@@ -44,8 +43,15 @@ DEFAULT_ENTITIES = [
     "CHAT_HANDLE",
     "API_KEY",
     "PASSWORD",
+    "USERNAME",
+    "TOKEN",
+    "COOKIE",
+    "PRIVATE_KEY",
+    "AUTHORIZATION",
     "VERIFICATION_CODE",
     "SECRET",
+    "PROXY_CONNECTION_SECRET",
+    "PROXY_ENDPOINT",
     "UUID",
     "MAC_ADDRESS",
     "STREET_ADDRESS",
@@ -54,67 +60,6 @@ DEFAULT_ENTITIES = [
 ]
 
 
-_SECRET_CONTEXT = re.compile(
-    r"(?i)\b("
-    r"password|passwd|pwd|passphrase|passcode|pass\b|"
-    r"secret|token|api[_\s-]?key|access[_\s-]?key|private[_\s-]?key|"
-    r"credential|auth|bearer|session|cookie|jwt|"
-    r"temp(?:orary)?\s*(?:password|pass|pwd|code)|"
-    r"reset|login|signin|sign-in"
-    r")\b"
-)
-
-_CODE_CONTEXT = re.compile(
-    r"(?i)\b("
-    r"otp|2fa|mfa|totp|hotp|"
-    r"verif(?:y|ication)|confirm(?:ation)?|"
-    r"one[-\s]?time|auth(?:entication)?\s*code|"
-    r"security\s*code|sms\s*code|pin(?:\s*code)?|"
-    r"access\s*code|login\s*code|reset\s*code|"
-    r"code\s*(?:is|was|:)|enter\s*(?:the\s*)?code"
-    r")\b"
-)
-
-_COMMON_WORDS = frozenset(
-    {
-        "password",
-        "passwd",
-        "secret",
-        "token",
-        "example",
-        "customer",
-        "support",
-        "please",
-        "thanks",
-        "hello",
-        "slack",
-        "discord",
-        "teams",
-        "email",
-        "phone",
-        "account",
-        "number",
-        "verification",
-        "confirm",
-        "temporary",
-        "rotated",
-        "update",
-        "ticket",
-        "workspace",
-        "message",
-        "something",
-        "nothing",
-        "everything",
-        "anything",
-        "someone",
-        "anyone",
-        "localhost",
-        "https",
-        "http",
-    }
-)
-
-# spaCy often tags these as PERSON in chat logs.
 _PERSON_DENYLIST = frozenset(
     {
         "email",
@@ -150,20 +95,6 @@ _PERSON_DENYLIST = frozenset(
         "no",
     }
 )
-
-
-def _shannon_entropy(value: str) -> float:
-    if not value:
-        return 0.0
-    counts = Counter(value)
-    length = len(value)
-    return -sum((c / length) * math.log2(c / length) for c in counts.values())
-
-
-def _near_context(text: str, start: int, end: int, pattern: re.Pattern[str], window: int = 40) -> bool:
-    left = max(0, start - window)
-    right = min(len(text), end + window)
-    return bool(pattern.search(text[left:right]))
 
 
 class CaptureGroupRecognizer(EntityRecognizer):
@@ -220,56 +151,40 @@ class CaptureGroupRecognizer(EntityRecognizer):
         return results
 
 
-def _password_recognizer() -> CaptureGroupRecognizer:
-    """Labeled passwords and temporary credentials pasted in chat."""
-    patterns = [
-        # password: value / password=value / pwd is value
-        (
-            re.compile(
-                r"(?i)\b(?:password|passwd|pwd|passphrase|passcode|temp(?:orary)?\s*(?:password|pass|pwd))"
-                r"\s*(?:is|=|:|->)\s*[\"'`]?([^\s\"'`]{4,128})[\"'`]?"
-            ),
-            0.95,
-        ),
-        # "password" "value" / password "value"
-        (
-            re.compile(
-                r"(?i)\b(?:password|passwd|pwd|passphrase)\b[^A-Za-z0-9]{0,12}"
-                r"[\"'`]([^\s\"'`]{4,128})[\"'`]"
-            ),
-            0.9,
-        ),
-        # my password is FooBar1!
-        (
-            re.compile(
-                r"(?i)\b(?:my|the|their|his|her|our)?\s*password\s+is\s+"
-                r"[\"'`]?([^\s\"'`,.;:]{4,128})[\"'`]?"
-            ),
-            0.9,
-        ),
-        # new password Abc123!xyz / temp password: ...
-        (
-            re.compile(
-                r"(?i)\b(?:new|old|temp(?:orary)?|reset)\s+password\s*[:=]?\s*"
-                r"[\"'`]?([^\s\"'`]{4,128})[\"'`]?"
-            ),
-            0.9,
-        ),
-        # AnyDesk / TeamViewer password: ...
-        (
-            re.compile(
-                r"(?i)\b(?:anydesk|teamviewer|splashtop|rustdesk|tv|ad)\s*"
-                r"(?:password|pass|pwd|code)\s*[:=]?\s*"
-                r"[\"'`]?([^\s\"'`]{4,32})[\"'`]?"
-            ),
-            0.95,
-        ),
-    ]
-    return CaptureGroupRecognizer(
-        supported_entity="PASSWORD",
-        name="PasswordRecognizer",
-        patterns=patterns,
-    )
+class SharedCredentialRecognizer(EntityRecognizer):
+    """Presidio adapter: all credential decisions come from CredentialEngine."""
+    def __init__(self, entities=None, policy=None):
+        from src.credentials import CredentialEngine
+        super().__init__(supported_entities=entities or ["API_KEY", "PASSWORD", "USERNAME", "TOKEN", "COOKIE", "PRIVATE_KEY", "AUTHORIZATION", "SECRET", "PROXY_CONNECTION_SECRET", "PROXY_ENDPOINT"],
+                         name="SharedCredentialRecognizer", context=[])
+        self.engine = CredentialEngine(policy)
+
+    def load(self):
+        return None
+
+    def analyze(self, text, entities, nlp_artifacts=None):
+        results = []
+        for finding in self.engine.detect_text(text):
+            if not finding.sensitive:
+                continue
+            if finding.category not in entities or finding.category not in self.supported_entities:
+                continue
+            result = RecognizerResult(entity_type=finding.category, start=finding.start,
+                                      end=finding.end, score=finding.confidence)
+            result.recognition_metadata = {
+                RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
+                RecognizerResult.RECOGNIZER_IDENTIFIER_KEY: self.id,
+            }
+            results.append(result)
+        return results
+
+
+def _labeled_api_key_recognizer():
+    return SharedCredentialRecognizer(["API_KEY"])
+
+
+def _password_recognizer():
+    return SharedCredentialRecognizer(["PASSWORD"])
 
 
 def _verification_code_recognizer() -> CaptureGroupRecognizer:
@@ -380,31 +295,8 @@ def _chat_handle_recognizer() -> PatternRecognizer:
     )
 
 
-def _api_key_recognizer() -> PatternRecognizer:
-    """Vendor API keys, JWTs, bearer tokens, and similar shaped secrets."""
-    return PatternRecognizer(
-        supported_entity="API_KEY",
-        name="ApiKeyRecognizer",
-        patterns=[
-            Pattern("openai_sk", r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_\-]{16,}\b", 0.9),
-            Pattern("openai_sk_live_test", r"\bsk-(?:live|test)-[A-Za-z0-9]{16,}\b", 0.95),
-            Pattern("anthropic_key", r"\bsk-ant-[A-Za-z0-9\-_]{16,}\b", 0.95),
-            Pattern("stripe_key", r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b", 0.95),
-            Pattern("github_pat", r"\bgh[pousr]_[A-Za-z0-9]{20,}\b", 0.95),
-            Pattern("github_fine_grained", r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", 0.95),
-            Pattern("gitlab_pat", r"\bglpat-[A-Za-z0-9\-_]{20,}\b", 0.95),
-            Pattern("sentry_token", r"\bsntrys_[A-Za-z0-9_\-]{20,}\b", 0.95),
-            Pattern("aws_access_key", r"\bAKIA[0-9A-Z]{16}\b", 0.95),
-            Pattern("slack_token", r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", 0.95),
-            Pattern("google_api_key", r"\bAIza[0-9A-Za-z\-_]{35}\b", 0.95),
-            Pattern("sendgrid", r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b", 0.95),
-            Pattern("twilio_sid", r"\bAC[a-f0-9]{32}\b", 0.85),
-            Pattern("jwt", r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b", 0.9),
-            Pattern("bearer_header", r"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*", 0.85),
-            Pattern("long_hex_secret", r"\b[a-f0-9]{32,128}\b", 0.45),
-        ],
-        context=["key", "token", "secret", "api", "credential", "bearer", "auth"],
-    )
+def _api_key_recognizer():
+    return SharedCredentialRecognizer(["API_KEY"])
 
 
 def _remote_desktop_recognizer() -> CaptureGroupRecognizer:
@@ -529,120 +421,24 @@ def _ticket_id_recognizer() -> PatternRecognizer:
     )
 
 
-class HighEntropySecretRecognizer(EntityRecognizer):
-    """
-    Catch unlabeled random passwords / tokens: high-entropy alphanumerics,
-    especially near password/secret/token language.
-    """
-
-    TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9\-._~+/=!@#$%^&*]{8,128})(?![A-Za-z0-9])")
-
-    def __init__(self) -> None:
-        # Context matching is done manually; leave Presidio context empty.
-        super().__init__(
-            supported_entities=["SECRET"],
-            name="HighEntropySecretRecognizer",
-            context=[],
-        )
-
-    def load(self) -> None:
-        return None
-
-    def analyze(
-        self,
-        text: str,
-        entities: list[str],
-        nlp_artifacts=None,
-    ) -> list[RecognizerResult]:
-        if "SECRET" not in entities:
-            return []
-
-        results: list[RecognizerResult] = []
-        for match in self.TOKEN_RE.finditer(text):
-            token = match.group(1)
-            if token.lower() in _COMMON_WORDS:
-                continue
-            if token.startswith(("http://", "https://", "www.")):
-                continue
-            if "@" in token:
-                continue
-            if token.isdigit():
-                continue
-            # Dates / times look "random" to entropy checks but aren't secrets.
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
-                continue
-            if re.fullmatch(r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}", token):
-                continue
-            if re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", token):
-                continue
-            # Snake_case chat usernames / channel names (alex_support) — skip unless spicy.
-            if re.fullmatch(r"[A-Za-z]+(?:_[A-Za-z]+)+", token):
-                continue
-            # JS / HTML-ish identifiers — leave script dumps alone.
-            if re.search(
-                r"(?i)(createElement|getElementById|querySelector|addEventListener|function|window|document)",
-                token,
-            ):
-                continue
-            if token.startswith(("http://", "https://", "www.", "https:", "http:")):
-                continue
-
-            entropy = _shannon_entropy(token)
-            has_digit = any(c.isdigit() for c in token)
-            has_upper = any(c.isupper() for c in token)
-            has_lower = any(c.islower() for c in token)
-            has_symbol = any(c in "-._~+/=!@#$%^&*" for c in token)
-            charset_variety = sum([has_digit, has_upper, has_lower, has_symbol])
-
-            near_secret = _near_context(text, match.start(1), match.end(1), _SECRET_CONTEXT)
-            near_code = _near_context(text, match.start(1), match.end(1), _CODE_CONTEXT)
-
-            score = 0.0
-            length = len(token)
-
-            if near_secret and length >= 8 and (charset_variety >= 2 or entropy >= 3.0):
-                score = 0.85
-            elif near_secret and length >= 6 and has_digit:
-                score = 0.75
-            elif near_code and 6 <= length <= 16 and charset_variety >= 2 and has_digit:
-                score = 0.7
-            elif length >= 16 and charset_variety >= 3 and entropy >= 3.5:
-                score = 0.65
-            elif length >= 20 and charset_variety >= 2 and entropy >= 3.2:
-                score = 0.55
-            elif length >= 24 and entropy >= 3.5:
-                score = 0.5
-
-            if score <= 0:
-                continue
-
-            result = RecognizerResult(
-                entity_type="SECRET",
-                start=match.start(1),
-                end=match.end(1),
-                score=score,
-            )
-            result.recognition_metadata = {
-                RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
-                RecognizerResult.RECOGNIZER_IDENTIFIER_KEY: self.id,
-            }
-            results.append(result)
-        return results
+class HighEntropySecretRecognizer(SharedCredentialRecognizer):
+    """Compatibility adapter for context-supported shared secret detection."""
+    def __init__(self):
+        super().__init__(["SECRET"])
 
 
-def build_registry(*, include_ticket_ids: bool = False) -> RecognizerRegistry:
+def build_registry(*, include_ticket_ids: bool = False, credential_policy=None) -> RecognizerRegistry:
     registry = RecognizerRegistry()
     registry.load_predefined_recognizers()
     registry.add_recognizer(_email_recognizer())
     registry.add_recognizer(_chat_handle_recognizer())
-    registry.add_recognizer(_api_key_recognizer())
-    registry.add_recognizer(_password_recognizer())
+    if credential_policy is None or credential_policy.action == "redact":
+        registry.add_recognizer(SharedCredentialRecognizer(policy=credential_policy))
     registry.add_recognizer(_verification_code_recognizer())
     registry.add_recognizer(_six_digit_otp_recognizer())
     registry.add_recognizer(_remote_desktop_recognizer())
     registry.add_recognizer(_sensitive_url_recognizer())
     registry.add_recognizer(WhatsAppBodyRecognizer())
-    registry.add_recognizer(HighEntropySecretRecognizer())
     registry.add_recognizer(_uuid_recognizer())
     registry.add_recognizer(_mac_address_recognizer())
     registry.add_recognizer(_street_address_recognizer())
@@ -653,15 +449,18 @@ def build_registry(*, include_ticket_ids: bool = False) -> RecognizerRegistry:
 
 
 @lru_cache(maxsize=2)
-def get_analyzer(*, include_ticket_ids: bool = False) -> AnalyzerEngine:
+def get_analyzer(*, include_ticket_ids: bool = False, credential_policy=None) -> AnalyzerEngine:
     """
     Build (and cache) an AnalyzerEngine.
 
     Uses spaCy en_core_web_lg when available; falls back to en_core_web_sm.
     """
-    registry = build_registry(include_ticket_ids=include_ticket_ids)
+    registry = build_registry(include_ticket_ids=include_ticket_ids, credential_policy=credential_policy)
 
     for model_name in ("en_core_web_lg", "en_core_web_sm"):
+        # Presidio otherwise attempts to download absent models at runtime.
+        if not spacy.util.is_package(model_name):
+            continue
         try:
             provider = NlpEngineProvider(
                 nlp_configuration={
@@ -674,7 +473,10 @@ def get_analyzer(*, include_ticket_ids: bool = False) -> AnalyzerEngine:
         except OSError:
             continue
 
-    return AnalyzerEngine(registry=registry)
+    raise RuntimeError(
+        "English model missing. Install en_core_web_sm or en_core_web_lg, "
+        "or use the executable built with build.ps1."
+    )
 
 
 def _is_denied_person(text: str, result) -> bool:
@@ -691,9 +493,10 @@ def detect(
     entities: list[str] | None = None,
     include_ticket_ids: bool = False,
     score_threshold: float = 0.4,
+    credential_policy=None,
 ):
     """Run PII / secret detection and return Presidio RecognizerResult list."""
-    analyzer = get_analyzer(include_ticket_ids=include_ticket_ids)
+    analyzer = get_analyzer(include_ticket_ids=include_ticket_ids, credential_policy=credential_policy)
     entity_list = list(entities) if entities is not None else list(DEFAULT_ENTITIES)
     if include_ticket_ids and "TICKET_ID" not in entity_list:
         entity_list.append("TICKET_ID")
@@ -704,4 +507,12 @@ def detect(
         entities=entity_list,
         score_threshold=score_threshold,
     )
+    # The shared connection policy owns proxy URL/endpoint privacy; do not let
+    # generic IP/URL recognizers override standard mode or collapse a whole URL.
+    from src.credentials import CredentialEngine
+    connection_regions = [finding for finding in CredentialEngine(credential_policy).detect_text(text)
+                          if finding.category == "PROXY_ENDPOINT"]
+    results = [result for result in results if not (
+        result.entity_type in {"IP_ADDRESS", "SENSITIVE_URL", "URL"} and any(
+            result.start < finding.end and result.end > finding.start for finding in connection_regions))]
     return [r for r in results if not _is_denied_person(text, r)]

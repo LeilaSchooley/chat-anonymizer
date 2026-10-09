@@ -26,6 +26,76 @@ Uses Python 3.12 (pinned). No need to activate a venv — prefix commands with `
 
 ## Usage
 
+### Desktop GUI and Windows executable
+
+Run `uv run python -m src.gui` (or `python gui_launcher.py` for JSON-only
+usage without the chat dependencies). Paste input or open a UTF-8 file, choose
+a mode, then click **Redact**. Copy or save the output from the window.
+Drop multiple files directly into the left input box, or select several with
+**Open files**. JSON imports are pretty-printed and combined into one valid JSON
+array, with one entry per document in supplied order (a single document keeps its
+original root type). Additional drops append entries without flattening arrays or
+merging overlapping keys. Comments and trailing commas are repaired automatically;
+review the left preview before redacting. **Polish JSON** also formats pasted JSON
+or combines pasted JSON documents. Duplicate keys and other invalid syntax are
+rejected rather than guessing values. Mixed text/JSON files stack in text/config
+mode. A failed import leaves the input intact. Original files are never rewritten.
+
+- **JSON values under keys** detects credential names, formats, and context at
+  every nesting level. Selected scalar values become `"[REDACTED]"`. For example,
+  `{"api_key":"fake-secret","count":2}` becomes
+  `{"api_key":"[REDACTED]","count":2}`.
+- **JSON key names** replaces selected field names with stable names such as
+  `REDACTED_KEY_1`, leaving their values untouched.
+- **Chat PII** uses the existing Presidio detector (requires the English model).
+- **Credentials in text / config** uses the shared engine without NLP and leaves
+  text outside credential spans intact. It supports labeled prose, logs, code
+  snippets, environment variables, and INI-style assignments.
+
+Automatic credential detection is enabled by default in the GUI. It catches
+vendor-prefixed fields such as `twocaptcha_apikey`, `stripeApiKey`, `access_token`,
+and `client_secret`, regardless of case or separators. Disable the checkbox for
+exact matching only. Field names such as `api_key_enabled` or `token_count` are
+left alone. Additional exact, case-sensitive field names can be entered separated
+by commas. Recognizable token formats, private keys, credential URLs, and labeled
+strings are also checked under generic field names. JSON modes
+preserve all other characters, including whitespace, number spelling, arrays,
+and escapes. Invalid JSON produces an error. JSON redaction needs no NLP model.
+Objects and arrays are kept: explicitly selecting a container redacts its scalar
+leaves rather than deleting the container. **JSON key names** only renames keys;
+use **JSON values under keys** to remove credentials.
+Boolean configuration values retain their original `true`/`false` tokens, even
+under names such as `preserve_cookies` or `session_token`. Quoted strings and
+actual serialized credentials are still inspected normally.
+
+**Redaction settings** lets you select usernames, API keys, tokens, passwords,
+cookies, private keys, authorization headers, proxy authentication, and other
+secrets. All are enabled by default; **Restore defaults** enables them again.
+Usernames are detected in named fields (including nested objects), labeled text,
+and connection URLs. Username and password components can be controlled
+independently. Harmless boolean settings and username metadata stay intact.
+The additional JSON keys box starts empty; category choices control automatic
+detection. Explicit field selections still follow category selection when the
+field has a known category. Chat PII settings also let you switch other personal
+information detection on or off. These GUI choices last for the current session;
+a loaded credential policy can set `disabled_categories` for later sessions.
+Unchecked categories may remain visible in output. Proxy endpoint privacy remains
+controlled by **standard / strict**.
+
+The action and confidence controls apply to credentials. **Report** displays
+metadata without secret values; **Block** refuses detected credentials; **Warn**
+explicitly leaves credentials in output. Use **Load credential policy** for custom
+names, patterns, strategy switches, and exact exceptions. See
+[credential architecture and policy reference](docs/credentials.md).
+**Proxy privacy: standard** preserves endpoints and redacts authentication.
+**Strict** also hides validated endpoints. An address such as `192.0.2.59:6491`
+is reported as infrastructure, not invented username/password credentials.
+
+Build the Windows app with `powershell -ExecutionPolicy Bypass -File .\build.ps1`.
+The build downloads dependencies and bundles the small English model for offline
+chat detection. Launch `dist\category-settings\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
+**entire folder** alongside the executable. Runtime processing is local.
+
 ```powershell
 # Anonymize a file (writes beside input by default)
 uv run python -m src.cli path\to\chat.txt
@@ -35,6 +105,15 @@ uv run python -m src.cli input\chat.txt -o output\chat_anon.txt --map maps\chat_
 
 # Print to stdout
 uv run python -m src.cli examples\example_chat.txt --stdout
+
+# JSON is detected automatically from the .json extension
+uv run python -m src.cli input\settings.json -o output\settings.anon.json --report
+
+# Credential-only config processing; no language model needed
+uv run python -m src.cli input\settings.env --format config --credential-action block
+
+# Include proxy infrastructure in privacy redaction
+uv run python -m src.cli input\settings.json --proxy-mode strict
 
 # Tests
 uv run pytest
@@ -65,6 +144,8 @@ Placeholders are **consistent within a run**: the same email always becomes `EMA
 - Optional `--dedupe` and `--drop-media-omitted` for WhatsApp exports
 
 Tune entity lists in `src/detectors.py`. Default score threshold is `0.4` (override with `--score-threshold`).
+Credential confidence defaults to `0.7` and can be changed in a policy. Chat
+diagnostics omit original values; reversible maps remain an explicit local export.
 
 ## Tests
 

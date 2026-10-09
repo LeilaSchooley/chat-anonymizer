@@ -21,6 +21,7 @@ maps/
 
 # Allow project docs, deps, and synthetic samples only
 !requirements.txt
+!docs/signpath-application.txt
 !tests/fixtures/**
 !examples/**
 
@@ -40,6 +41,8 @@ build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
+*.spec
 .coverage
 htmlcov/
 

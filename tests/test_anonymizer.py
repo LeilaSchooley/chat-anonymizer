@@ -26,6 +26,19 @@ SAMPLE_CHAT = FIXTURES / "sample_chat.txt"
 WHATSAPP_CHAT = FIXTURES / "whatsapp_sample.txt"
 
 
+def test_missing_model_does_not_attempt_download(monkeypatch):
+    from src import detectors
+
+    monkeypatch.setattr(detectors.spacy.util, "is_package", lambda name: False)
+
+    def unexpected_provider(*args, **kwargs):
+        raise AssertionError("Must not initialize or download an absent model")
+
+    monkeypatch.setattr(detectors, "NlpEngineProvider", unexpected_provider)
+    with pytest.raises(RuntimeError, match="English model missing"):
+        detectors.get_analyzer.__wrapped__()
+
+
 def _spacy_available() -> bool:
     try:
         import spacy
@@ -52,6 +65,17 @@ def _spans(text: str, results) -> set[str]:
 
 
 class TestCustomRecognizers:
+    @pytest.mark.parametrize("text,value", [
+        ('twocaptcha_apikey: synthetic-key', 'synthetic-key'),
+        ('{"twocaptcha_apikey":"short","count":2}', 'short'),
+        ("TWOCAPTCHA_APIKEY = 'has spaces'", 'has spaces'),
+        ('stripeApiKey: abc', 'abc'),
+    ])
+    def test_vendor_labeled_api_keys(self, text, value):
+        from src.detectors import _labeled_api_key_recognizer
+        results = _labeled_api_key_recognizer().analyze(text=text, entities=["API_KEY"])
+        assert _spans(text, results) == {value}
+
     def test_chat_handle_detects_mention(self):
         recognizer = _chat_handle_recognizer()
         text = "ping @priya_nair please"

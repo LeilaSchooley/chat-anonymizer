@@ -1,4 +1,4 @@
-"""WhatsApp-export helpers and line-aware secret detection (local only)."""
+"""WhatsApp parsing, cleanup, and non-credential code/remote-ID adapters."""
 
 from __future__ import annotations
 
@@ -17,47 +17,6 @@ WA_LINE_RE = re.compile(
     r"(?P<sender>[^:\n]+):\s*"
     r"(?P<body>.*)"
     r")$"
-)
-
-_PASSWORD_ASK_RE = re.compile(
-    r"(?i)\b("
-    r"password|passwd|pwd|passcode|passphrase|"
-    r"teamviewer|anydesk|splashtop|chrome\s*remote|"
-    r"login|signin|sign-in|credentials?"
-    r")\b"
-)
-
-_HARMLESS_BODY = frozenset(
-    {
-        "yes",
-        "no",
-        "ok",
-        "okay",
-        "ready",
-        "retry",
-        "thanks",
-        "thank you",
-        "please",
-        "hi",
-        "hey",
-        "hello",
-        "sure",
-        "done",
-        "wait",
-        "asap",
-        "lol",
-        "haha",
-        "cool",
-        "great",
-        "perfect",
-        "received",
-        "sent",
-        "checking",
-        "one sec",
-        "one second",
-        "media omitted",
-        "<media omitted>",
-    }
 )
 
 _MEDIA_OMITTED_RE = re.compile(r"(?i)^<?media omitted>?$")
@@ -91,38 +50,9 @@ def iter_whatsapp_messages(text: str) -> list[WaMessage]:
 
 
 def looks_like_credential(value: str) -> bool:
-    """Heuristic for short random passwords / codes pasted as their own message."""
-    raw = value.strip()
-    if not raw or len(raw) < 4 or len(raw) > 64:
-        return False
-    # Strip a single leading decorative colon/punctuation often typed mid-chat.
-    token = re.sub(r"^[:\-\s]+", "", raw).strip()
-    if not token or len(token) < 4:
-        return False
-    if token.lower() in _HARMLESS_BODY:
-        return False
-    if _MEDIA_OMITTED_RE.match(token):
-        return False
-    # Multi-word chat sentences are not raw passwords (spaces ≠ symbols).
-    if any(c.isspace() for c in token):
-        return False
-    if token.lower().startswith(("http://", "https://", "www.")):
-        return False
-
-    has_digit = any(c.isdigit() for c in token)
-    has_symbol = any(not c.isalnum() for c in token)
-    has_upper = any(c.isupper() for c in token)
-    has_lower = any(c.islower() for c in token)
-    if token.isalpha() and not has_digit:
-        return False
-    # cssss1, ezpd3zzb, SnowByrds4545, :h@2323, $sdsdsdsd{Fj
-    if has_symbol and len(token) >= 4:
-        return True
-    if has_digit and 4 <= len(token) <= 20:
-        return True
-    if has_digit and has_upper and has_lower and len(token) >= 6:
-        return True
-    return False
+    """Compatibility wrapper for the shared engine's chat-body rule."""
+    from src.credentials import short_chat_credential
+    return short_chat_credential(value)
 
 
 def preprocess_chat(
@@ -158,16 +88,14 @@ def preprocess_chat(
 
 class WhatsAppBodyRecognizer(EntityRecognizer):
     """
-    Detect secrets that are entire WhatsApp message bodies, plus password
-    lookback across the previous 1–2 messages (local heuristics only).
+    Detect standalone verification codes and remote desktop IDs.
+    Credential rules are supplied by the shared CredentialEngine.
     """
 
     def __init__(self) -> None:
         super().__init__(
             supported_entities=[
                 "VERIFICATION_CODE",
-                "PASSWORD",
-                "SECRET",
                 "REMOTE_DESKTOP_ID",
             ],
             name="WhatsAppBodyRecognizer",
@@ -188,8 +116,6 @@ class WhatsAppBodyRecognizer(EntityRecognizer):
     def analyze(self, text: str, entities: list[str], nlp_artifacts=None) -> list[RecognizerResult]:
         wanted = set(entities) & {
             "VERIFICATION_CODE",
-            "PASSWORD",
-            "SECRET",
             "REMOTE_DESKTOP_ID",
         }
         if not wanted:
@@ -200,11 +126,9 @@ class WhatsAppBodyRecognizer(EntityRecognizer):
             return []
 
         results: list[RecognizerResult] = []
-        recent_bodies: list[str] = []
 
         for msg in messages:
             body = msg.body.strip()
-            password_context = any(_PASSWORD_ASK_RE.search(prev) for prev in recent_bodies[-2:])
 
             # Bare OTP / PIN pasted alone: 002793, 847291
             if "VERIFICATION_CODE" in wanted and re.fullmatch(r"\d{4,8}", body):
@@ -223,31 +147,5 @@ class WhatsAppBodyRecognizer(EntityRecognizer):
                 results.append(
                     self._emit("REMOTE_DESKTOP_ID", msg.body_start, msg.body_end, 0.8)
                 )
-            # Password lookback: prior lines asked for password / remote desktop
-            elif password_context and looks_like_credential(body):
-                entity = "PASSWORD" if "PASSWORD" in wanted else "SECRET"
-                if entity in wanted:
-                    start, end = self._credential_span(msg)
-                    results.append(self._emit(entity, start, end, 0.92))
-            # Solo short random password-looking bodies (ezpd3zzb, SnowByrds4545, :h@2323)
-            elif looks_like_credential(body) and 4 <= len(body.strip()) <= 24:
-                # Prefer PASSWORD label for remote-support style short secrets.
-                entity = "PASSWORD" if "PASSWORD" in wanted else "SECRET"
-                if entity in wanted:
-                    start, end = self._credential_span(msg)
-                    results.append(self._emit(entity, start, end, 0.75))
-
-            recent_bodies.append(body)
 
         return results
-
-    @staticmethod
-    def _credential_span(msg: WaMessage) -> tuple[int, int]:
-        """Skip a leading ':' / dash often typed before a password."""
-        body = msg.body
-        rel = 0
-        while rel < len(body) and body[rel] in ":\t -":
-            rel += 1
-        if rel >= len(body):
-            return msg.body_start, msg.body_end
-        return msg.body_start + rel, msg.body_end

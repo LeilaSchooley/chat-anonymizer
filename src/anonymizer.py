@@ -9,13 +9,14 @@ from typing import Any
 
 from src.detectors import DEFAULT_ENTITIES, detect
 from src.whatsapp import preprocess_chat
+from src.credentials import CredentialEngine, CredentialPolicy
 
 
 @dataclass
 class AnonymizeResult:
-    text: str
+    text: str = field(repr=False)
     entities_found: list[dict[str, Any]] = field(default_factory=list)
-    mapping: dict[str, str] = field(default_factory=dict)
+    mapping: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 class ChatAnonymizer:
@@ -36,12 +37,14 @@ class ChatAnonymizer:
         mapping: dict[str, str] | None = None,
         dedupe_lines: bool = True,
         drop_media_omitted: bool = False,
+        credential_policy: CredentialPolicy | None = None,
     ) -> None:
         self.entities = list(entities) if entities is not None else list(DEFAULT_ENTITIES)
         self.include_ticket_ids = include_ticket_ids
         self.score_threshold = score_threshold
         self.dedupe_lines = dedupe_lines
         self.drop_media_omitted = drop_media_omitted
+        self.credential_engine = CredentialEngine(credential_policy)
         # original_span_text -> PLACEHOLDER
         self.mapping: dict[str, str] = dict(mapping or {})
         self._counts: dict[str, int] = {}
@@ -75,6 +78,8 @@ class ChatAnonymizer:
         return placeholder
 
     def anonymize(self, text: str) -> AnonymizeResult:
+        credentials = self.credential_engine.detect_text(text)
+        self.credential_engine.apply_text(text, credentials)  # Enforce blocking before PII processing.
         text = preprocess_chat(
             text,
             dedupe_lines=self.dedupe_lines,
@@ -85,6 +90,7 @@ class ChatAnonymizer:
             entities=self.entities,
             include_ticket_ids=self.include_ticket_ids,
             score_threshold=self.score_threshold,
+            credential_policy=self.credential_engine.policy,
         )
 
         # Prefer higher score, then longer span, then earlier start when resolving overlaps.
@@ -110,7 +116,6 @@ class ChatAnonymizer:
                     "start": result.start,
                     "end": result.end,
                     "score": round(float(result.score), 4),
-                    "original": original,
                     "replacement": placeholder,
                 }
             )

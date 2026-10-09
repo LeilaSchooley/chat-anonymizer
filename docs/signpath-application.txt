@@ -1,0 +1,74 @@
+SIGNPATH FOUNDATION APPLICATION DRAFT
+Prepared 9 October 2026. Replace every bracketed item before submitting.
+This is a draft, not a submitted application or claim of approval.
+
+Project name: Chat Anonymizer
+Repository: https://github.com/LeilaSchooley/chat-anonymizer
+Website / download page: [public project or release page]
+License: [chosen OSI-approved license; add LICENSE before submission]
+Release: [published Windows release URL and version]
+Maintainer / contact: [your name, GitHub account, and email]
+
+PROJECT DESCRIPTION
+Chat Anonymizer is a local Windows desktop application for reviewing and
+redacting secrets and sensitive information before sharing configuration files,
+logs, support messages, and chat transcripts. Its GUI accepts pasted content
+and multiple dropped files. JSON inputs can be conservatively repaired,
+pretty-printed, and combined into a single document for review.
+
+The shared detector considers field names, value formats, and surrounding
+structure. It covers API credentials, passwords, cookies, session tokens,
+private keys, and authentication in proxy and database connection strings.
+It preserves ordinary boolean settings and unrelated configuration values.
+Users preview the input and redacted output before copying or saving.
+Detection is heuristic; we do not claim complete coverage of every secret.
+
+PRIVACY AND PURPOSE
+Submitted content is processed locally and is not uploaded for redaction.
+The application operates on files and text selected by the user. It does not
+scan network ports, exploit vulnerabilities, or bypass security controls.
+Users choose when to export output. Some outputs, including reversible
+replacement maps and warning-mode output, require care because they may
+contain original sensitive data.
+
+WHY WE ARE APPLYING
+We would like to distribute verifiably built Windows releases with code
+signatures so users can verify their origin and integrity. We are requesting
+consideration for SignPath Foundation's open-source signing programme.
+We understand acceptance is discretionary and would welcome guidance on
+the evidence of project reputation needed for this early-stage project.
+
+BUILD AND VALIDATION
+The current build uses Python and PyInstaller to produce a portable Windows
+application folder. The repository includes build.ps1, synthetic regression
+tests, and a packaged executable self-test. Current local validation: 237
+tests pass. The source covers nested JSON, boolean preservation, proxy
+credentials, native multi-file drop handling, and conservative JSON cleanup.
+Automated public CI build / provenance link: [add verifiable CI workflow URL].
+Third-party dependencies and their licences: [review and attach inventory].
+
+SIGNING RESPONSIBILITIES
+Authors / maintainers: [names or GitHub team]
+Reviewers: [names or GitHub team]
+Release signing approvers: [names or GitHub team]
+MFA status: [confirm for all relevant repository and SignPath accounts]
+Proposed release process: reviewed source and build configuration, automated
+build from a tagged revision, then manual approval of each signing request.
+Published code signing and privacy policy: [URL; label proposed until approved].
+
+READINESS CHECKLIST
+- Add the chosen OSI-approved licence and review dependency licences.
+- Confirm public repository access and publish the Windows release, download
+  documentation, and portable installation/removal instructions.
+- Set consistent product name/version metadata in the executable.
+- Add verifiable automated release builds and source-to-artifact provenance.
+- Name signing roles, confirm MFA, and publish signing/privacy policies.
+- Supply honest evidence of maintenance, users, contributions, or reputation.
+- Do not claim SignPath support or add approval attribution before acceptance.
+
+Current checkout has no LICENSE or .github release workflow. Public repository
+access and an existing published release could not be independently verified.
+An executable built locally is not evidence of a published release.
+
+Official application: https://signpath.org/apply.html
+Official conditions: https://signpath.org/terms
