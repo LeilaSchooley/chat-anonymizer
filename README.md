@@ -93,7 +93,7 @@ is reported as infrastructure, not invented username/password credentials.
 
 Build the Windows app with `powershell -ExecutionPolicy Bypass -File .\build.ps1`.
 The build downloads dependencies and bundles the small English model for offline
-chat detection. Launch `dist\category-settings\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
+chat detection. Launch `dist\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
 **entire folder** alongside the executable. Runtime processing is local.
 
 ```powershell
@@ -178,3 +178,15 @@ chat-anonymizer/
 1. Harden regex + Presidio coverage against your real chat formats
 2. Optional second pass with a local LLM for residual PII
 3. Package as an installable CLI (`pip install -e .`)
+
+Open files supports multi-selection (Ctrl/Shift in the picker). **Open folder**
+imports supported text/config files from that folder in filename order without
+traversing subfolders. Dropping a folder uses the same import behavior.
+
+Builds reuse the dependency environment and PyInstaller analysis cache by default.
+Use `build.ps1 -Clean` for a full clean rebuild, or `-DistRoot dist/test-build`
+for a separate output folder. The standard output is `dist/ChatAnonymizer`;
+close that executable before rebuilding it. Build options use data collection instead of explicitly importing every submodule
+of the larger packages; their own PyInstaller hooks may still include optional modules. The packaged
+self-test still checks native drag-and-drop, folder and multi-file picker imports,
+JSON redaction, settings, custom patterns, and offline chat processing.

@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from src.json_redactor import redact_json_documents
 from src.credentials import CredentialEngine, CredentialPolicy, DetectionError, load_policy, REDACTION_CATEGORIES
-from src.file_inputs import read_file_batch, read_json_batch
+from src.file_inputs import read_file_batch, read_json_batch, folder_files
 from src.json_inputs import parse_inputs, format_inputs
 
 
@@ -19,8 +19,10 @@ def create_root():
     try:
         from tkinterdnd2 import TkinterDnD
         return TkinterDnD.Tk()
-    except ImportError:
-        return tk.Tk()
+    except (ImportError, tk.TclError):
+        root = tk.Tk()
+        root.drop_unavailable = True
+        return root
 
 
 class App:
@@ -44,6 +46,7 @@ class App:
         toolbar = ttk.Frame(root, padding=10)
         toolbar.pack(fill="x")
         ttk.Button(toolbar, text="Open files", command=self.open_file).pack(side="left")
+        ttk.Button(toolbar, text="Open folder", command=self.open_folder).pack(side="left", padx=5)
         ttk.Button(toolbar, text="Polish JSON", command=self.polish_json).pack(side="left", padx=5)
         ttk.Combobox(toolbar, textvariable=self.mode, state="readonly", width=28,
                      values=["JSON values under keys", "JSON key names", "Credentials in text / config", "Chat PII"]).pack(side="left", padx=10)
@@ -78,6 +81,8 @@ class App:
             from tkinterdnd2 import DND_FILES
             self.input.drop_target_register(DND_FILES)
             self.input.dnd_bind('<<Drop>>', self.drop_files)
+        else:
+            self.status.set('Drag-and-drop is unavailable in this build. Use Open files / Open folder.')
         ttk.Label(root, textvariable=self.status, padding=10).pack(fill="x")
         root.after(100, self.poll)
 
@@ -94,10 +99,27 @@ class App:
         if paths:
             self.add_files(list(paths))
 
+    def open_folder(self):
+        directory = filedialog.askdirectory(title='Open folder — import supported files')
+        if not directory:
+            return
+        try:
+            paths = folder_files(directory)
+        except DetectionError as exc:
+            messagebox.showerror('Cannot open folder', str(exc))
+            return
+        self.add_files(paths)
+
     def drop_files(self, event):
         try:
             paths = list(self.root.tk.splitlist(event.data))
-            return 'copy' if self.add_files(paths) else 'none'
+            expanded = []
+            for path in paths:
+                expanded.extend(folder_files(path) if Path(path).is_dir() else [path])
+            return 'copy' if self.add_files(expanded) else 'none'
+        except DetectionError as exc:
+            messagebox.showerror('Cannot drop folder', str(exc))
+            return 'none'
         except tk.TclError:
             messagebox.showerror("Cannot drop files", "The dropped file list could not be read.")
             return 'none'

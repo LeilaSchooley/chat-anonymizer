@@ -167,6 +167,7 @@ def test_gui_category_settings_control_redaction(app):
     app.restore_categories()
     app.keys.set('')
     assert all(variable.get() for variable in app.categories.values())
+
     app.categories['USERNAME'].set(False)
     app.categories['API_KEY'].set(False)
     app.input.insert('1.0', '{"username":"alice","api_key":"synthetic","password":"synthetic","enabled":false}')
@@ -177,3 +178,28 @@ def test_gui_category_settings_control_redaction(app):
     assert 'disabled' in app.status.get()
     app.restore_categories()
     assert all(variable.get() for variable in app.categories.values())
+
+
+def test_open_folder_imports_five_json_files(tmp_path, app, monkeypatch):
+    paths, contents = five_files(tmp_path)
+    (tmp_path / 'ignore.exe').write_bytes(b'\xff')
+    nested = tmp_path / 'nested'
+    nested.mkdir()
+    (nested / 'hidden.json').write_text('{"nested":true}')
+    monkeypatch.setattr('src.gui.filedialog.askdirectory', lambda **kwargs: str(tmp_path))
+    app.open_folder()
+    assert json.loads(app.input.get('1.0','end-1c')) == [json.loads(item) for item in contents]
+
+
+def test_drop_folder_and_empty_folder_atomic(tmp_path, app, monkeypatch):
+    paths, contents = five_files(tmp_path)
+    payload = app.root.tk.call('format', '%s', (str(tmp_path),))
+    assert app.drop_files(SimpleNamespace(data=payload)) == 'copy'
+    assert json.loads(app.input.get('1.0','end-1c')) == [json.loads(item) for item in contents]
+    before = app.input.get('1.0','end-1c')
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    monkeypatch.setattr('src.gui.messagebox.showerror', lambda *args: None)
+    monkeypatch.setattr('src.gui.filedialog.askdirectory', lambda **kwargs: str(empty))
+    app.open_folder()
+    assert app.input.get('1.0','end-1c') == before

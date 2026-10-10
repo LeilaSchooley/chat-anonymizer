@@ -44,6 +44,16 @@ if __name__ == "__main__":
                     time.sleep(.02)
                 assert json.loads(app.output.get('1.0','end-1c')) == [{'token':'[REDACTED]', 'index':index} for index in range(5)]
                 assert 'synthetic' not in app.output.get('1.0','end-1c')
+                stage = "GUI folder and multi-file picker"
+                from unittest.mock import patch
+                app.input.delete('1.0', 'end')
+                with patch('src.gui.filedialog.askdirectory', return_value=directory):
+                    app.open_folder()
+                assert len(json.loads(app.input.get('1.0','end-1c'))) == 5
+                app.input.delete('1.0', 'end')
+                with patch('src.gui.filedialog.askopenfilenames', return_value=tuple(paths)):
+                    app.open_file()
+                assert len(json.loads(app.input.get('1.0','end-1c'))) == 5
             stage = "GUI redaction category settings"
             assert all(variable.get() for variable in app.categories.values())
             app.categories['USERNAME'].set(False)
