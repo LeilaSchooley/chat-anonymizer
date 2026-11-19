@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $buildClock = [Diagnostics.Stopwatch]::StartNew()
 # Retain build tools and the downloaded model between runs.
-uv --cache-dir .uv-cache sync --inexact
+uv --cache-dir .uv-cache sync --locked --inexact
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
 & .\.venv\Scripts\python.exe -c "import PyInstaller, en_core_web_sm; assert en_core_web_sm.__version__ == '3.8.0'"
 if ($LASTEXITCODE -ne 0) {

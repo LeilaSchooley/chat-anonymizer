@@ -1,0 +1,54 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.9'
+      - name: Install dependencies
+        run: uv --cache-dir .uv-cache sync --locked
+      - name: Build and self-test executable
+        shell: pwsh
+        run: ./build.ps1
+      - name: Run regression tests
+        run: uv --cache-dir .uv-cache run --inexact pytest
+      - name: Package portable download
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:REF_TYPE -eq 'tag') {
+            $version = (uv run --inexact python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+            if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag must match pyproject.toml version' }
+          }
+          ./release.ps1 -SkipBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatAnonymizer-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $assets = @(Get-ChildItem dist/*.zip, dist/*.sha256 | ForEach-Object FullName)
+          gh release create $env:RELEASE_TAG @assets --verify-tag --title "Chat Anonymizer $env:RELEASE_TAG" --notes 'Portable Windows x64 app. Download the ZIP, extract the entire folder, and run ChatAnonymizer.exe. Includes the offline English model; no Python installation needed. This build is unsigned.'
+    permissions:
+      contents: write

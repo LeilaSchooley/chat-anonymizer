@@ -42,6 +42,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 .uv-cache/
+.tools/
 *.spec
 .coverage
 htmlcov/

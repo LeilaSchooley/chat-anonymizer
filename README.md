@@ -96,6 +96,17 @@ The build downloads dependencies and bundles the small English model for offline
 chat detection. Launch `dist\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
 **entire folder** alongside the executable. Runtime processing is local.
 
+Create a shareable ZIP and SHA256 checksum with `./release.ps1` (or
+`./release.ps1 -SkipBuild` after a successful build). Downloads are written to
+`dist/ChatAnonymizer-0.1.0-windows-x64.zip` and its `.sha256` file. Extract the
+whole ZIP before launching the app; Python is not required on the receiving PC.
+The executable is currently unsigned.
+
+The **Windows release** GitHub Actions workflow builds and tests on Windows.
+Run it manually for downloadable build artifacts, or push a version tag matching
+`pyproject.toml` (currently `v0.1.0`) to publish the ZIP and checksum on GitHub
+Releases. Release builds must pass both the packaged self-test and regression tests.
+
 ```powershell
 # Anonymize a file (writes beside input by default)
 uv run python -m src.cli path\to\chat.txt
