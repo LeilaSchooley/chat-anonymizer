@@ -66,6 +66,19 @@ if __name__ == "__main__":
                 time.sleep(.02)
             assert json.loads(app.output.get('1.0','end-1c')) == {'username':'alice','password':'[REDACTED]','enabled':False}
             app.restore_categories()
+            stage = "GUI selective CSV and TSV redaction"
+            app.mode.set('CSV / TSV columns')
+            app.input.delete('1.0', 'end')
+            table = 'record\torder\temail\tamount\nrecord-demo\t1001\tsynthetic@example.test\t14999\n'
+            app.input.insert('1.0', table)
+            app.csv_header.set(True)
+            app.csv_uuid.set(True)
+            app.redact()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not app.status.get().startswith('Done:'):
+                root.update()
+                time.sleep(.02)
+            assert app.output.get('1.0', 'end-1c') == table.replace('record-demo', '[COLUMN_1_1]').replace('synthetic@example.test', '[EMAIL_1]')
             root.destroy()
             stage = "JSON adapter"
             assert redact_json('{"token":"fake","count":2}', ["token"])[0] == '{"token":"[REDACTED]","count":2}'

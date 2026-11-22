@@ -51,6 +51,24 @@ mode. A failed import leaves the input intact. Original files are never rewritte
 - **Credentials in text / config** uses the shared engine without NLP and leaves
   text outside credential spans intact. It supports labeled prose, logs, code
   snippets, environment variables, and INI-style assignments.
+- **CSV / TSV columns** replaces email cells by default, keeping every other
+  cell and the row order intact. Open or drop one `.csv` or `.tsv` file, or paste
+  a table and select this mode. Opening a table replaces the current input;
+  multiple table files must be processed separately to keep their headers aligned.
+  Check **First row is a header** if your export has column names; leave it off
+  for a headerless export. **Order UUID (column 1)** and **Order ID (column 2)**
+  are optional shortcuts for that export layout, not automatic ID detection.
+  Use **Other columns** for any other one-based column numbers, such as `3,5`.
+  Leave both order checkboxes off to change just email cells. Disable **Email
+  cells** to redact only explicitly selected columns.
+  Repeated emails use the same `[EMAIL_1]` placeholder within a run; selected
+  order fields use placeholders such as `[COLUMN_1_1]`. Empty cells stay empty.
+  CSV mode always redacts the selected cells, independently of credential policy
+  actions and confidence. It needs no language model. Comma, tab, semicolon, and
+  pipe separators are detected automatically; choose one explicitly if your table
+  contains several possible separators. Quotes, embedded newlines, original line
+  endings, and unselected characters are preserved. Uneven rows or malformed
+  quotes produce an error. **Save output** offers CSV/TSV, matching the delimiter.
 
 Automatic credential detection is enabled by default in the GUI. It catches
 vendor-prefixed fields such as `twocaptcha_apikey`, `stripeApiKey`, `access_token`,
@@ -98,13 +116,13 @@ chat detection. Launch `dist\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
 
 Create a shareable ZIP and SHA256 checksum with `./release.ps1` (or
 `./release.ps1 -SkipBuild` after a successful build). Downloads are written to
-`dist/ChatAnonymizer-0.1.0-windows-x64.zip` and its `.sha256` file. Extract the
+`dist/ChatAnonymizer-0.1.1-windows-x64.zip` and its `.sha256` file. Extract the
 whole ZIP before launching the app; Python is not required on the receiving PC.
 The executable is currently unsigned.
 
 The **Windows release** GitHub Actions workflow builds and tests on Windows.
 Run it manually for downloadable build artifacts, or push a version tag matching
-`pyproject.toml` (currently `v0.1.0`) to publish the ZIP and checksum on GitHub
+`pyproject.toml` (currently `v0.1.1`) to publish the ZIP and checksum on GitHub
 Releases. Release builds must pass both the packaged self-test and regression tests.
 
 ```powershell

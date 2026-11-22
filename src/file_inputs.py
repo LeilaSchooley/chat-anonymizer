@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src.credentials import DetectionError
 
-SUPPORTED_INPUT_SUFFIXES = {'.json', '.txt', '.log', '.env', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.csv'}
+SUPPORTED_INPUT_SUFFIXES = {'.json', '.txt', '.log', '.env', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.csv', '.tsv'}
 
 
 def folder_files(directory):

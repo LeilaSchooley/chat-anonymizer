@@ -13,6 +13,7 @@ from src.json_redactor import redact_json_documents
 from src.credentials import CredentialEngine, CredentialPolicy, DetectionError, load_policy, REDACTION_CATEGORIES
 from src.file_inputs import read_file_batch, read_json_batch, folder_files
 from src.json_inputs import parse_inputs, format_inputs
+from src.csv_redactor import redact_csv, parse_columns, DELIMITERS
 
 
 def create_root():
@@ -42,6 +43,12 @@ class App:
         self.action = tk.StringVar(value="redact")
         self.threshold = tk.StringVar(value="0.7")
         self.proxy_mode = tk.StringVar(value="standard")
+        self.csv_emails = tk.BooleanVar(value=True)
+        self.csv_uuid = tk.BooleanVar(value=False)
+        self.csv_order_id = tk.BooleanVar(value=False)
+        self.csv_columns = tk.StringVar(value='')
+        self.csv_header = tk.BooleanVar(value=False)
+        self.csv_delimiter = tk.StringVar(value='Auto')
         self.status = tk.StringVar(value="Paste text, open files, or drop files into the input box. Processing stays local.")
         toolbar = ttk.Frame(root, padding=10)
         toolbar.pack(fill="x")
@@ -49,18 +56,36 @@ class App:
         ttk.Button(toolbar, text="Open folder", command=self.open_folder).pack(side="left", padx=5)
         ttk.Button(toolbar, text="Polish JSON", command=self.polish_json).pack(side="left", padx=5)
         ttk.Combobox(toolbar, textvariable=self.mode, state="readonly", width=28,
-                     values=["JSON values under keys", "JSON key names", "Credentials in text / config", "Chat PII"]).pack(side="left", padx=10)
+                     values=["JSON values under keys", "JSON key names", "Credentials in text / config", "Chat PII", "CSV / TSV columns"]).pack(side="left", padx=10)
         self.run_button = ttk.Button(toolbar, text="Redact", command=self.redact)
         self.run_button.pack(side="left")
         ttk.Button(toolbar, text="Copy output", command=self.copy).pack(side="right")
         ttk.Button(toolbar, text="Save output", command=self.save).pack(side="right", padx=10)
         options = ttk.Frame(root, padding=(10, 0, 10, 10))
+        self.json_options = options
         options.pack(fill="x")
         ttk.Label(options, text="JSON keys (comma-separated, case-sensitive):").pack(side="left")
         ttk.Entry(options, textvariable=self.keys).pack(side="left", fill="x", expand=True, padx=10)
-        ttk.Checkbutton(root, text="Automatically detect credentials in JSON (names, values, and context)",
-                        variable=self.auto_sensitive).pack(anchor="w", padx=10)
+        self.auto_checkbox = ttk.Checkbutton(root, text="Automatically detect credentials in JSON (names, values, and context)",
+                        variable=self.auto_sensitive)
+        self.auto_checkbox.pack(anchor="w", padx=10)
+        self.csv_options = ttk.Frame(root, padding=10)
+        csv_choices = ttk.Frame(self.csv_options)
+        csv_choices.pack(fill='x')
+        ttk.Checkbutton(csv_choices, text='Email cells', variable=self.csv_emails).pack(side='left')
+        ttk.Checkbutton(csv_choices, text='Order UUID (column 1)', variable=self.csv_uuid).pack(side='left', padx=12)
+        ttk.Checkbutton(csv_choices, text='Order ID (column 2)', variable=self.csv_order_id).pack(side='left')
+        ttk.Checkbutton(csv_choices, text='First row is a header', variable=self.csv_header).pack(side='left', padx=12)
+        csv_fields = ttk.Frame(self.csv_options)
+        csv_fields.pack(fill='x', pady=(6, 0))
+        ttk.Label(csv_fields, text='Other columns (numbers, e.g. 3,5):').pack(side='left')
+        ttk.Entry(csv_fields, textvariable=self.csv_columns, width=16).pack(side='left', padx=8)
+        ttk.Label(csv_fields, text='Delimiter:').pack(side='left')
+        ttk.Combobox(csv_fields, textvariable=self.csv_delimiter, state='readonly', width=12,
+                     values=list(DELIMITERS)).pack(side='left', padx=8)
+        ttk.Label(self.csv_options, text='Only selected cells change. Column numbers start at 1; order controls refer to your export layout.').pack(anchor='w', pady=(6, 0))
         settings = ttk.Frame(root, padding=10)
+        self.credential_settings = settings
         settings.pack(fill="x")
         ttk.Label(settings, text="Credential action:").pack(side="left")
         ttk.Combobox(settings, textvariable=self.action, state="readonly", width=10,
@@ -73,6 +98,7 @@ class App:
         ttk.Combobox(settings, textvariable=self.proxy_mode, state="readonly", width=10,
                      values=["standard", "strict"]).pack(side="left")
         panels = ttk.Panedwindow(root, orient="horizontal")
+        self.panels = panels
         panels.pack(fill="both", expand=True, padx=10)
         self.input = self.panel(panels, "Input — paste text / JSON or drop files here")
         self.output = self.panel(panels, "Redacted output")
@@ -84,7 +110,18 @@ class App:
         else:
             self.status.set('Drag-and-drop is unavailable in this build. Use Open files / Open folder.')
         ttk.Label(root, textvariable=self.status, padding=10).pack(fill="x")
+        self.mode.trace_add('write', lambda *_: self.update_mode())
         root.after(100, self.poll)
+
+    def update_mode(self):
+        for widget in (self.json_options, self.auto_checkbox, self.csv_options, self.credential_settings):
+            widget.pack_forget()
+        if self.mode.get() == 'CSV / TSV columns':
+            self.csv_options.pack(fill='x', before=self.panels)
+        else:
+            self.json_options.pack(fill='x', before=self.panels)
+            self.auto_checkbox.pack(anchor='w', padx=10, before=self.panels)
+            self.credential_settings.pack(fill='x', before=self.panels)
 
     def panel(self, parent, label):
         frame = ttk.Frame(parent)
@@ -95,7 +132,7 @@ class App:
         return widget
 
     def open_file(self):
-        paths = filedialog.askopenfilenames(filetypes=[("Text / JSON", "*.txt *.json"), ("All files", "*.*")])
+        paths = filedialog.askopenfilenames(filetypes=[("Text / JSON / CSV", "*.txt *.json *.csv *.tsv"), ("All files", "*.*")])
         if paths:
             self.add_files(list(paths))
 
@@ -126,6 +163,9 @@ class App:
 
     def add_files(self, paths):
         try:
+            table_mode = bool(paths) and all(Path(path).suffix.lower() in {'.csv', '.tsv'} for path in paths)
+            if table_mode and len(paths) != 1:
+                raise DetectionError('Open one CSV/TSV table at a time so headers and columns stay aligned.')
             content, all_json = read_file_batch(paths)
             current = self.input.get('1.0', 'end-1c')
             json_mode = all_json and (not current or self.mode.get().startswith('JSON'))
@@ -143,7 +183,12 @@ class App:
         except DetectionError as exc:
             messagebox.showerror("Cannot open files", str(exc))
             return False
-        if json_mode:
+        if table_mode:
+            self.input.delete('1.0', 'end')
+            self.input.insert('1.0', content)
+            self.import_snapshot = None
+            self.import_documents = []
+        elif json_mode:
             self.input.delete('1.0', 'end')
             self.input.insert('1.0', content)
             self.import_snapshot = content
@@ -157,9 +202,12 @@ class App:
         self.output.configure(state='disabled')
         if json_mode:
             self.mode.set('JSON values under keys')
+        elif table_mode:
+            self.csv_delimiter.set('Tab' if Path(paths[0]).suffix.lower() == '.tsv' else 'Auto')
+            self.mode.set('CSV / TSV columns')
         else:
             self.mode.set('Credentials in text / config')
-        detail = 'combined and pretty-printed' if json_mode else 'stacked in input order'
+        detail = 'loaded as one table; select the header option if needed' if table_mode else ('combined and pretty-printed' if json_mode else 'stacked in input order')
         repair = ' Comments / trailing commas repaired; review the input.' if repaired else ''
         self.status.set(f"Added {len(paths)} file(s), {detail}.{repair} You can edit before redacting.")
         return True
@@ -190,13 +238,21 @@ class App:
         keys = [key.strip() for key in self.keys.get().split(",") if key.strip()]
         auto_sensitive = self.auto_sensitive.get()
         chat_pii = self.chat_pii.get()
+        csv_mode = mode == 'CSV / TSV columns'
         try:
-            policy = replace(self.policy, action=self.action.get(), threshold=float(self.threshold.get()),
-                             proxy_mode=self.proxy_mode.get(),
-                             disabled_categories=tuple(key for key, variable in self.categories.items() if not variable.get()))
-            engine = CredentialEngine(policy)
+            csv_columns = parse_columns(self.csv_columns.get()) if csv_mode else ()
+            if csv_mode:
+                csv_columns = tuple(sorted(set(csv_columns) | ({1} if self.csv_uuid.get() else set()) |
+                                           ({2} if self.csv_order_id.get() else set())))
+            csv_emails, csv_header = self.csv_emails.get(), self.csv_header.get()
+            csv_delimiter = DELIMITERS[self.csv_delimiter.get()] if csv_mode else None
+            if not csv_mode:
+                policy = replace(self.policy, action=self.action.get(), threshold=float(self.threshold.get()),
+                                 proxy_mode=self.proxy_mode.get(),
+                                 disabled_categories=tuple(key for key, variable in self.categories.items() if not variable.get()))
+                engine = CredentialEngine(policy)
         except Exception:
-            messagebox.showerror("Invalid settings", "Check the confidence threshold and credential policy.")
+            messagebox.showerror("Invalid settings", "Check CSV column numbers and delimiter." if csv_mode else "Check the confidence threshold and credential policy.")
             return
         self.output.configure(state="normal")
         self.output.delete("1.0", "end")
@@ -206,7 +262,12 @@ class App:
 
         def work():
             try:
-                if mode == "Chat PII":
+                if csv_mode:
+                    result = redact_csv(text, emails=csv_emails, columns=csv_columns,
+                                        header=csv_header, delimiter=csv_delimiter)
+                    self.events.put((result.text, f'Done: {result.count} cell(s) redacted. Other cells and row order preserved.'))
+                    return
+                elif mode == "Chat PII":
                     from src.anonymizer import ChatAnonymizer
                     from src.detectors import DEFAULT_ENTITIES
                     entities = DEFAULT_ENTITIES if chat_pii else [key for key, _ in REDACTION_CATEGORIES] + ['PROXY_ENDPOINT']
@@ -290,8 +351,15 @@ class App:
         self.root.clipboard_append(self.output.get("1.0", "end-1c"))
 
     def save(self):
-        path = filedialog.asksaveasfilename(defaultextension=".json" if self.mode.get().startswith("JSON") else ".txt",
-                                          filetypes=[("JSON", "*.json"), ("Text", "*.txt")])
+        csv_mode = self.mode.get() == 'CSV / TSV columns'
+        extension = '.json' if self.mode.get().startswith('JSON') else '.txt'
+        if csv_mode:
+            try:
+                extension = '.tsv' if redact_csv(self.input.get('1.0', 'end-1c'), delimiter=DELIMITERS[self.csv_delimiter.get()]).delimiter == '\t' else '.csv'
+            except DetectionError:
+                extension = '.csv'
+        path = filedialog.asksaveasfilename(defaultextension=extension,
+                                          filetypes=[("CSV", "*.csv"), ("TSV", "*.tsv")] if csv_mode else [("JSON", "*.json"), ("Text", "*.txt")])
         if path:
             try:
                 with open(path, "w", encoding="utf-8", newline="") as stream:

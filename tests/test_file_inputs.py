@@ -37,6 +37,13 @@ def app(shared_app):
     shared_app.mode.set('JSON values under keys')
     shared_app.action.set('redact')
     shared_app.proxy_mode.set('standard')
+    shared_app.csv_emails.set(True)
+    shared_app.csv_uuid.set(False)
+    shared_app.csv_order_id.set(False)
+    shared_app.csv_header.set(False)
+    shared_app.csv_columns.set('')
+    shared_app.csv_delimiter.set('Auto')
+    shared_app.threshold.set('0.7')
     return shared_app
 
 
@@ -203,3 +210,68 @@ def test_drop_folder_and_empty_folder_atomic(tmp_path, app, monkeypatch):
     monkeypatch.setattr('src.gui.filedialog.askdirectory', lambda **kwargs: str(empty))
     app.open_folder()
     assert app.input.get('1.0','end-1c') == before
+
+
+def test_tsv_import_email_only_then_optional_order_columns(tmp_path, app):
+    source = 'record\torder\temail\tamount\r\nsynthetic-id\t1001\ta@example.test\t14999\r\n'
+    path = tmp_path / 'orders.tsv'
+    with path.open('w', encoding='utf-8', newline='') as stream:
+        stream.write(source)
+    assert app.add_files([str(path)])
+    assert app.mode.get() == 'CSV / TSV columns'
+    assert app.csv_options.winfo_manager() == 'pack'
+    assert not app.credential_settings.winfo_manager()
+    app.csv_header.set(True)
+    app.action.set('warn')
+    app.threshold.set('not-a-number')  # Credential settings do not affect CSV mode.
+    app.redact()
+    wait_for_output(app.root, app)
+    assert app.output.get('1.0', 'end-1c') == source.replace('a@example.test', '[EMAIL_1]')
+    app.csv_uuid.set(True)
+    app.csv_order_id.set(True)
+    app.redact()
+    wait_for_output(app.root, app)
+    assert app.output.get('1.0', 'end-1c') == source.replace('a@example.test', '[EMAIL_1]').replace('synthetic-id', '[COLUMN_1_1]').replace('1001', '[COLUMN_2_1]')
+
+
+def test_csv_multi_import_is_atomic_and_single_import_replaces_table(tmp_path, app, monkeypatch):
+    first, second = tmp_path / 'first.csv', tmp_path / 'second.csv'
+    first.write_text('a@example.test,1001\n', encoding='utf-8')
+    second.write_text('b@example.test,1002\n', encoding='utf-8')
+    assert app.add_files([str(first)])
+    before = app.input.get('1.0', 'end-1c')
+    monkeypatch.setattr('src.gui.messagebox.showerror', lambda *args: None)
+    assert not app.add_files([str(first), str(second)])
+    assert app.input.get('1.0', 'end-1c') == before
+    assert app.add_files([str(second)])
+    assert app.input.get('1.0', 'end-1c') == second.read_bytes().decode('utf-8')
+
+
+def test_csv_save_uses_tsv_extension_and_exact_output(tmp_path, app, monkeypatch):
+    source = 'record\ta@example.test\t14999\n'
+    app.mode.set('CSV / TSV columns')
+    app.input.insert('1.0', source)
+    app.redact()
+    wait_for_output(app.root, app)
+    options = {}
+    path = tmp_path / 'saved.tsv'
+    def choose(**kwargs):
+        options.update(kwargs)
+        return str(path)
+    monkeypatch.setattr('src.gui.filedialog.asksaveasfilename', choose)
+    app.save()
+    assert options['defaultextension'] == '.tsv'
+    assert path.read_bytes() == source.replace('a@example.test', '[EMAIL_1]').encode()
+
+
+def test_pasted_csv_mode_switch_hides_and_restores_settings(app):
+    app.mode.set('CSV / TSV columns')
+    app.input.insert('1.0', 'record,1001,a@example.test,14999')
+    app.csv_columns.set('2')
+    app.csv_emails.set(False)
+    app.redact()
+    wait_for_output(app.root, app)
+    assert app.output.get('1.0', 'end-1c') == 'record,[COLUMN_2_1],a@example.test,14999'
+    app.mode.set('Chat PII')
+    assert not app.csv_options.winfo_manager()
+    assert app.credential_settings.winfo_manager() == 'pack'
