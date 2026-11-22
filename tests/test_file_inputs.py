@@ -44,6 +44,8 @@ def app(shared_app):
     shared_app.csv_columns.set('')
     shared_app.csv_delimiter.set('Auto')
     shared_app.threshold.set('0.7')
+    shared_app.text_encoding.set('Auto')
+    shared_app.clear_workbook()
     return shared_app
 
 
@@ -275,3 +277,109 @@ def test_pasted_csv_mode_switch_hides_and_restores_settings(app):
     app.mode.set('Chat PII')
     assert not app.csv_options.winfo_manager()
     assert app.credential_settings.winfo_manager() == 'pack'
+
+
+def test_workbook_import_sheet_switch_and_export(app, tmp_path, monkeypatch):
+    from pathlib import Path
+    source = Path(__file__).parent / 'fixtures/workbook.xlsx'
+    assert app.add_files([str(source)])
+    assert app.mode.get() == 'CSV / TSV columns'
+    assert app.csv_delimiter.get() == 'Comma'
+    assert tuple(app.sheet_picker['values']) == ('Orders', 'Other sheet')
+    app.csv_header.set(True)
+    app.redact()
+    wait_for_output(app.root, app)
+    assert 'buyer@example.test' not in app.output.get('1.0', 'end-1c')
+    app.workbook_sheet.set('Other sheet')
+    app.select_workbook_sheet()
+    assert app.output.get('1.0', 'end-1c') == ''
+    assert app.input.get('1.0', 'end-1c') == ',record,email\n,other-id,other@example.test\n'
+    app.redact()
+    wait_for_output(app.root, app)
+    output = tmp_path / 'selected.csv'
+    monkeypatch.setattr('src.gui.filedialog.asksaveasfilename', lambda **kwargs: str(output))
+    app.save()
+    assert output.read_bytes() == b',record,email\n,other-id,[EMAIL_1]\n'
+
+
+def test_failed_workbook_import_and_sheet_selection_preserve_current_input(app, tmp_path, monkeypatch):
+    from pathlib import Path
+    from src.spreadsheet_inputs import WorkbookInput
+    source = Path(__file__).parent / 'fixtures/workbook.xlsx'
+    assert app.add_files([str(source)])
+    before = app.input.get('1.0', 'end-1c')
+    monkeypatch.setattr('src.gui.messagebox.showerror', lambda *args: None)
+    invalid = tmp_path / 'broken.xlsb'
+    invalid.write_bytes(b'private@example.test')
+    assert not app.add_files([str(invalid)])
+    assert app.input.get('1.0', 'end-1c') == before
+    assert app.workbook is not None
+    monkeypatch.setattr(WorkbookInput, 'preview', lambda *args: (_ for _ in ()).throw(DetectionError('Cannot read worksheet.')))
+    app.workbook_sheet.set('Other sheet')
+    app.select_workbook_sheet()
+    assert app.workbook_sheet.get() == 'Orders'
+    assert app.input.get('1.0', 'end-1c') == before
+
+
+@pytest.mark.parametrize('extension,separator,label', [('.tab', '\t', 'Tab'), ('.psv', '|', 'Pipe'), ('.ssv', ';', 'Semicolon')])
+def test_more_delimited_extensions(app, tmp_path, extension, separator, label):
+    source = separator.join(['id', 'a@example.test', '14999'])
+    path = tmp_path / ('orders' + extension)
+    path.write_bytes(source.encode())
+    assert app.add_files([str(path)])
+    assert app.csv_delimiter.get() == label
+    app.redact()
+    wait_for_output(app.root, app)
+    assert app.output.get('1.0', 'end-1c') == source.replace('a@example.test', '[EMAIL_1]')
+
+
+def test_workbook_batch_and_unsupported_file_are_rejected_atomically(app, tmp_path, monkeypatch):
+    from pathlib import Path
+    source = str(Path(__file__).parent / 'fixtures/workbook.xlsx')
+    app.input.insert('1.0', 'keep this input')
+    monkeypatch.setattr('src.gui.messagebox.showerror', lambda *args: None)
+    assert not app.add_files([source, source])
+    unknown = tmp_path / 'file.pdf'
+    unknown.write_bytes(b'not a text import')
+    assert not app.add_files([str(unknown)])
+    assert app.input.get('1.0', 'end-1c') == 'keep this input'
+
+
+def test_json_lines_and_explicit_old_encoding(app, tmp_path):
+    path = tmp_path / 'rows.ndjson'
+    path.write_bytes(b'{"token":"synthetic"}\n{"enabled":true}\n')
+    assert app.add_files([str(path)])
+    assert app.mode.get() == 'JSON values under keys'
+    assert json.loads(app.input.get('1.0', 'end-1c')) == [{'token': 'synthetic'}, {'enabled': True}]
+    app.input.delete('1.0', 'end')
+    path = tmp_path / 'old.json'
+    path.write_bytes('{"label":"café","token":"synthetic"}'.encode('cp1252'))
+    app.text_encoding.set('Windows-1252')
+    assert app.add_files([str(path)])
+    assert json.loads(app.input.get('1.0', 'end-1c'))['label'] == 'café'
+
+
+def test_workbook_save_cannot_overwrite_original(app, tmp_path, monkeypatch):
+    from tests.workbook_fixtures import make_xlsx
+    source = make_xlsx(tmp_path / 'orders.xlsx')
+    before = source.read_bytes()
+    assert app.add_files([str(source)])
+    app.redact()
+    wait_for_output(app.root, app)
+    errors = []
+    monkeypatch.setattr('src.gui.filedialog.asksaveasfilename', lambda **kwargs: str(source))
+    monkeypatch.setattr('src.gui.messagebox.showerror', lambda *args: errors.append(args))
+    app.save()
+    assert source.read_bytes() == before
+    assert errors
+
+
+def test_sheet_cannot_switch_during_redaction(app):
+    from pathlib import Path
+    assert app.add_files([str(Path(__file__).parent / 'fixtures/workbook.xlsx')])
+    app.redact()
+    app.workbook_sheet.set('Other sheet')
+    app.select_workbook_sheet()
+    assert app.workbook_sheet.get() == 'Orders'
+    wait_for_output(app.root, app)
+    assert 'other-id' not in app.output.get('1.0', 'end-1c')

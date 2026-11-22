@@ -126,6 +126,8 @@ pygments==2.20.0
     #   pytest
     #   rich
 pytest==9.1.1
+python-calamine==0.6.2
+    # via chat-anonymizer
 pyyaml==6.0.3
     # via presidio-analyzer
 regex==2026.7.19

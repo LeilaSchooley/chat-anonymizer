@@ -70,6 +70,52 @@ mode. A failed import leaves the input intact. Original files are never rewritte
   endings, and unselected characters are preserved. Uneven rows or malformed
   quotes produce an error. **Save output** offers CSV/TSV, matching the delimiter.
 
+### File imports
+
+The Windows app supports these input formats through **Open files** and
+drag-and-drop:
+
+| Input | Extensions | Import behavior |
+| --- | --- | --- |
+| Excel workbooks and templates | `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.xltx`, `.xltm` | Choose a worksheet; cell values appear as a CSV preview |
+| OpenDocument spreadsheets | `.ods` | Choose a worksheet; cell values appear as a CSV preview |
+| Delimited tables | `.csv`, `.tsv`, `.tab`, `.psv`, `.ssv` | Email-only and selected-column redaction |
+| JSON and JSON Lines | `.json`, `.jsonc`, `.jsonl`, `.ndjson` | JSON documents are validated, repaired where supported, and combined for review |
+| Text, logs, configuration, and source snippets | `.txt`, `.text`, `.log`, `.env`, `.env.*`, `.ini`, `.cfg`, `.conf`, `.config`, `.properties`, `.yaml`, `.yml`, `.xml`, `.toml`, `.md`, `.sql`, `.html`, `.htm`, `.css`, `.js`, `.ts`, `.py`, `.sh`, `.bat`, `.ps1` | Text/config mode; select Chat PII for personal information detection |
+
+Open **one table or workbook at a time**. For a workbook, use the **Worksheet**
+selector to review and redact each sheet separately, including hidden worksheets.
+Only the selected sheet is exported. Leading blank columns and rows are retained
+so column numbers match the worksheet. Imports read cell values and cached formula
+results; formulas are not recalculated, number/date formatting and styles are not
+preserved, and macros are not run. Review the values preview before redacting.
+Output is CSV/TSV, not a rewritten workbook. Original workbooks are never modified.
+Encrypted workbooks must be decrypted in your spreadsheet app before importing.
+Worksheets larger than 2 million cells must be split into smaller tables first.
+
+**Text file encoding** defaults to UTF-8 and detects UTF-8/UTF-16/UTF-32 byte-order
+marks. For older Windows exports, choose **Windows-1252** before opening. No
+characters are silently replaced when decoding fails. Output is UTF-8.
+PDFs, Word documents, images, archives, and other binary formats are not text
+imports; export their relevant data to a supported format first.
+
+The command line recognizes tables and workbooks too:
+
+```powershell
+# Redact just email cells in a selected worksheet; preserve its header row
+uv run python -m src.cli orders.xlsx --sheet Orders --header -o output/orders.csv
+
+# Also redact columns 1 and 2 in a headerless CSV export
+uv run python -m src.cli orders.csv --columns 1,2 -o output/orders.csv
+
+# An older Windows text export, with the delimiter explicitly selected
+uv run python -m src.cli orders.csv --encoding Windows-1252 --delimiter Semicolon
+```
+
+Table mode always redacts its selected cells. Credential action, confidence, and
+chat controls apply to their own modes. The CLI uses the first worksheet unless
+`--sheet` is supplied; `--no-emails` selects only the explicit `--columns`.
+
 Automatic credential detection is enabled by default in the GUI. It catches
 vendor-prefixed fields such as `twocaptcha_apikey`, `stripeApiKey`, `access_token`,
 and `client_secret`, regardless of case or separators. Disable the checkbox for
@@ -116,13 +162,13 @@ chat detection. Launch `dist\ChatAnonymizer\ChatAnonymizer.exe`; distribute the
 
 Create a shareable ZIP and SHA256 checksum with `./release.ps1` (or
 `./release.ps1 -SkipBuild` after a successful build). Downloads are written to
-`dist/ChatAnonymizer-0.1.1-windows-x64.zip` and its `.sha256` file. Extract the
+`dist/ChatAnonymizer-0.1.2-windows-x64.zip` and its `.sha256` file. Extract the
 whole ZIP before launching the app; Python is not required on the receiving PC.
 The executable is currently unsigned.
 
 The **Windows release** GitHub Actions workflow builds and tests on Windows.
 Run it manually for downloadable build artifacts, or push a version tag matching
-`pyproject.toml` (currently `v0.1.1`) to publish the ZIP and checksum on GitHub
+`pyproject.toml` (currently `v0.1.2`) to publish the ZIP and checksum on GitHub
 Releases. Release builds must pass both the packaged self-test and regression tests.
 
 ```powershell

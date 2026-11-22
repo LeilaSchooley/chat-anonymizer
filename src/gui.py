@@ -11,7 +11,8 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from src.json_redactor import redact_json_documents
 from src.credentials import CredentialEngine, CredentialPolicy, DetectionError, load_policy, REDACTION_CATEGORIES
-from src.file_inputs import read_file_batch, read_json_batch, folder_files
+from src.file_inputs import read_file_batch, read_json_batch, folder_files, TEXT_ENCODINGS, SUPPORTED_INPUT_SUFFIXES, supported_input
+from src.spreadsheet_inputs import WorkbookInput, WORKBOOK_SUFFIXES, TABLE_SUFFIXES, table_delimiter
 from src.json_inputs import parse_inputs, format_inputs
 from src.csv_redactor import redact_csv, parse_columns, DELIMITERS
 
@@ -49,6 +50,10 @@ class App:
         self.csv_columns = tk.StringVar(value='')
         self.csv_header = tk.BooleanVar(value=False)
         self.csv_delimiter = tk.StringVar(value='Auto')
+        self.text_encoding = tk.StringVar(value='Auto')
+        self.workbook = None
+        self.workbook_sheet = tk.StringVar(value='')
+        self.loaded_sheet = ''
         self.status = tk.StringVar(value="Paste text, open files, or drop files into the input box. Processing stays local.")
         toolbar = ttk.Frame(root, padding=10)
         toolbar.pack(fill="x")
@@ -70,7 +75,15 @@ class App:
                         variable=self.auto_sensitive)
         self.auto_checkbox.pack(anchor="w", padx=10)
         self.csv_options = ttk.Frame(root, padding=10)
+        self.workbook_options = ttk.Frame(self.csv_options)
+        ttk.Label(self.workbook_options, text='Worksheet:').pack(side='left')
+        self.sheet_picker = ttk.Combobox(self.workbook_options, textvariable=self.workbook_sheet,
+                                        state='readonly', width=24)
+        self.sheet_picker.pack(side='left', padx=8)
+        self.sheet_picker.bind('<<ComboboxSelected>>', lambda _: self.select_workbook_sheet())
+        ttk.Label(self.workbook_options, text='Selected sheet only. Values exported as CSV/TSV; styles and formulas are not exported.').pack(side='left')
         csv_choices = ttk.Frame(self.csv_options)
+        self.csv_choices = csv_choices
         csv_choices.pack(fill='x')
         ttk.Checkbutton(csv_choices, text='Email cells', variable=self.csv_emails).pack(side='left')
         ttk.Checkbutton(csv_choices, text='Order UUID (column 1)', variable=self.csv_uuid).pack(side='left', padx=12)
@@ -84,6 +97,12 @@ class App:
         ttk.Combobox(csv_fields, textvariable=self.csv_delimiter, state='readonly', width=12,
                      values=list(DELIMITERS)).pack(side='left', padx=8)
         ttk.Label(self.csv_options, text='Only selected cells change. Column numbers start at 1; order controls refer to your export layout.').pack(anchor='w', pady=(6, 0))
+        import_settings = ttk.Frame(root, padding=(10, 4))
+        import_settings.pack(fill='x')
+        ttk.Label(import_settings, text='Text file encoding:').pack(side='left')
+        ttk.Combobox(import_settings, textvariable=self.text_encoding, state='readonly', width=16,
+                     values=list(TEXT_ENCODINGS)).pack(side='left', padx=8)
+        ttk.Label(import_settings, text='Auto reads UTF-8 and Unicode BOMs. For older exports choose Windows-1252 before opening.').pack(side='left')
         settings = ttk.Frame(root, padding=10)
         self.credential_settings = settings
         settings.pack(fill="x")
@@ -111,6 +130,7 @@ class App:
             self.status.set('Drag-and-drop is unavailable in this build. Use Open files / Open folder.')
         ttk.Label(root, textvariable=self.status, padding=10).pack(fill="x")
         self.mode.trace_add('write', lambda *_: self.update_mode())
+        root.bind('<Destroy>', lambda event: self.workbook.close() if event.widget == root and self.workbook else None, add='+')
         root.after(100, self.poll)
 
     def update_mode(self):
@@ -132,7 +152,11 @@ class App:
         return widget
 
     def open_file(self):
-        paths = filedialog.askopenfilenames(filetypes=[("Text / JSON / CSV", "*.txt *.json *.csv *.tsv"), ("All files", "*.*")])
+        paths = filedialog.askopenfilenames(filetypes=[
+            ('Supported files', ' '.join('*' + suffix for suffix in sorted(SUPPORTED_INPUT_SUFFIXES)) + ' .env .env.*'),
+            ('Excel / OpenDocument', '*.xlsx *.xls *.xlsm *.xlsb *.ods *.xltx *.xltm'),
+            ('Delimited tables', '*.csv *.tsv *.tab *.psv *.ssv'),
+            ('All files', '*.*')])
         if paths:
             self.add_files(list(paths))
 
@@ -162,16 +186,23 @@ class App:
             return 'none'
 
     def add_files(self, paths):
+        if str(self.run_button['state']) == 'disabled':
+            messagebox.showerror('Processing', 'Wait for redaction to finish before opening another file.')
+            return False
         try:
-            table_mode = bool(paths) and all(Path(path).suffix.lower() in {'.csv', '.tsv'} for path in paths)
+            if any(not supported_input(path) and Path(path).suffix for path in paths):
+                raise DetectionError('Unsupported file type. Open a supported text, JSON, delimited table, or workbook file.')
+            table_mode = bool(paths) and any(Path(path).suffix.lower() in TABLE_SUFFIXES for path in paths)
             if table_mode and len(paths) != 1:
-                raise DetectionError('Open one CSV/TSV table at a time so headers and columns stay aligned.')
-            content, all_json = read_file_batch(paths)
+                raise DetectionError('Open one table or workbook at a time so sheets, headers, and columns stay aligned.')
+            if paths and Path(paths[0]).suffix.lower() in WORKBOOK_SUFFIXES:
+                return self.open_workbook(paths[0])
+            content, all_json = read_file_batch(paths, self.text_encoding.get())
             current = self.input.get('1.0', 'end-1c')
             json_mode = all_json and (not current or self.mode.get().startswith('JSON'))
             repaired = False
             if json_mode:
-                documents, repaired = read_json_batch(paths)
+                documents, repaired = read_json_batch(paths, self.text_encoding.get())
                 if current:
                     if current == self.import_snapshot:
                         previous = self.import_documents
@@ -183,6 +214,7 @@ class App:
         except DetectionError as exc:
             messagebox.showerror("Cannot open files", str(exc))
             return False
+        self.clear_workbook()
         if table_mode:
             self.input.delete('1.0', 'end')
             self.input.insert('1.0', content)
@@ -203,7 +235,7 @@ class App:
         if json_mode:
             self.mode.set('JSON values under keys')
         elif table_mode:
-            self.csv_delimiter.set('Tab' if Path(paths[0]).suffix.lower() == '.tsv' else 'Auto')
+            self.csv_delimiter.set(table_delimiter(paths[0]))
             self.mode.set('CSV / TSV columns')
         else:
             self.mode.set('Credentials in text / config')
@@ -211,6 +243,60 @@ class App:
         repair = ' Comments / trailing commas repaired; review the input.' if repaired else ''
         self.status.set(f"Added {len(paths)} file(s), {detail}.{repair} You can edit before redacting.")
         return True
+
+    def clear_workbook(self):
+        if self.workbook is not None:
+            self.workbook.close()
+            self.workbook = None
+        self.loaded_sheet = ''
+        self.workbook_sheet.set('')
+        self.workbook_options.pack_forget()
+
+    def open_workbook(self, path):
+        workbook = WorkbookInput(path)
+        try:
+            name = workbook.sheets[0]
+            content = workbook.preview(name)
+        except Exception:
+            workbook.close()
+            raise
+        self.clear_workbook()
+        self.workbook = workbook
+        self.sheet_picker.configure(values=workbook.sheets)
+        self.workbook_options.pack(fill='x', pady=(0, 8), before=self.csv_choices)
+        self.show_workbook_sheet(name, content)
+        return True
+
+    def show_workbook_sheet(self, name, content):
+        self.workbook_sheet.set(name)
+        self.loaded_sheet = name
+        self.input.delete('1.0', 'end')
+        self.input.insert('1.0', content)
+        self.import_snapshot = None
+        self.import_documents = []
+        self.output.configure(state='normal')
+        self.output.delete('1.0', 'end')
+        self.output.configure(state='disabled')
+        self.csv_delimiter.set('Comma')
+        self.mode.set('CSV / TSV columns')
+        self.status.set(f'Loaded worksheet {self.workbook.sheets.index(name) + 1} of {len(self.workbook.sheets)}. '
+                        'Choose a sheet, review values and header setting, then redact. Only the selected sheet is exported.')
+
+    def select_workbook_sheet(self):
+        if self.workbook is None:
+            return
+        if str(self.run_button['state']) == 'disabled':
+            self.workbook_sheet.set(self.loaded_sheet)
+            self.status.set('Wait for redaction to finish before choosing another worksheet.')
+            return
+        try:
+            name = self.workbook_sheet.get()
+            content = self.workbook.preview(name)
+        except DetectionError as exc:
+            self.workbook_sheet.set(self.loaded_sheet)
+            messagebox.showerror('Cannot open worksheet', str(exc))
+            return
+        self.show_workbook_sheet(name, content)
 
     def polish_json(self):
         try:
@@ -362,11 +448,17 @@ class App:
                                           filetypes=[("CSV", "*.csv"), ("TSV", "*.tsv")] if csv_mode else [("JSON", "*.json"), ("Text", "*.txt")])
         if path:
             try:
+                if self.workbook is not None and Path(path).resolve() == self.workbook.path:
+                    raise DetectionError('Choose a separate CSV/TSV output file. The original workbook is not overwritten.')
+                if csv_mode and Path(path).suffix.lower() not in {'.csv', '.tsv', '.txt'}:
+                    raise DetectionError('Table output contains cell values. Save it as CSV, TSV, or text.')
                 with open(path, "w", encoding="utf-8", newline="") as stream:
                     stream.write(self.output.get("1.0", "end-1c"))
                 self.status.set(f"Saved to {path}")
             except OSError:
                 messagebox.showerror("Cannot save file", "Could not write the output file.")
+            except DetectionError as exc:
+                messagebox.showerror('Cannot save file', str(exc))
 
 
 def main():

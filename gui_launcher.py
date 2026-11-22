@@ -79,6 +79,28 @@ if __name__ == "__main__":
                 root.update()
                 time.sleep(.02)
             assert app.output.get('1.0', 'end-1c') == table.replace('record-demo', '[COLUMN_1_1]').replace('synthetic@example.test', '[EMAIL_1]')
+            stage = "native workbook imports and worksheet selection"
+            from pathlib import Path
+            bundle = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+            fixture = bundle / 'selftest/workbook.xlsx' if getattr(sys, 'frozen', False) else bundle / 'tests/fixtures/workbook.xlsx'
+            app.csv_uuid.set(False)
+            assert app.add_files([str(fixture)])
+            assert tuple(app.sheet_picker['values']) == ('Orders', 'Other sheet')
+            app.redact()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not app.status.get().startswith('Done:'):
+                root.update()
+                time.sleep(.02)
+            assert 'buyer@example.test' not in app.output.get('1.0', 'end-1c')
+            assert 'synthetic-id,1001,[EMAIL_1],14999,false' in app.output.get('1.0', 'end-1c')
+            app.workbook_sheet.set('Other sheet')
+            app.select_workbook_sheet()
+            app.redact()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not app.status.get().startswith('Done:'):
+                root.update()
+                time.sleep(.02)
+            assert app.output.get('1.0', 'end-1c') == ',record,email\n,other-id,[EMAIL_1]\n'
             root.destroy()
             stage = "JSON adapter"
             assert redact_json('{"token":"fake","count":2}', ["token"])[0] == '{"token":"[REDACTED]","count":2}'

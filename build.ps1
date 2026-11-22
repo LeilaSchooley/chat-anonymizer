@@ -13,7 +13,8 @@ if ($LASTEXITCODE -ne 0) {
 $packArgs = @('--noconfirm', '--onedir', '--windowed', '--name', 'ChatAnonymizer', '--distpath', $DistRoot,
     '--collect-data', 'spacy', '--collect-data', 'presidio_analyzer', '--collect-data', 'presidio_anonymizer',
     '--collect-all', 'en_core_web_sm', '--collect-data', 'tldextract', '--collect-all', 'tkinterdnd2',
-    '--copy-metadata', 'en_core_web_sm')
+    '--copy-metadata', 'en_core_web_sm', '--collect-all', 'python_calamine',
+    '--add-data', 'tests/fixtures/workbook.xlsx;selftest')
 if ($Clean) { $packArgs += '--clean' }
 $packArgs += 'gui_launcher.py'
 & .\.venv\Scripts\python.exe -m PyInstaller @packArgs
